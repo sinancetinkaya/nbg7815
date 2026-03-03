@@ -1,3 +1,17 @@
+# About this repo (please read)
+This is a fork of [@qosmio](https://github.com/qosmio) 's [openwrt-ipq](https://github.com/qosmio/openwrt-ipq) with NBG7815 specific patches from [@asvio](https://github.com/asvio) [@ansuel](https://github.com/ansuel) <br>
+
+<font color="red">**WARNING:**</font> Backup your configs first!<br>
+To increase `/overlay` size to 3.4gb, this firmware merges mmcblk0p10 and mmcblk0p11 partitions. When you flash this firmware for the first time, the filesystem has to be expanded to whole partition using `resize2fs`
+```
+apk update && apk add resize2fs
+resize2fs /dev/mmcblk0p10
+```
+
+
+
+---
+## Original README ⏬
 # NSS Support Matrix
 
 | Feature   | IPQ807x | IPQ60xx | Feature         | IPQ807x | IPQ60xx |
