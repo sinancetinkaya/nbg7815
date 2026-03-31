@@ -1,0 +1,52 @@
+#!/bin/sh /etc/rc.common
+
+START=85
+
+gen_set_mac_psr() {
+	if [ ! -f /etc/bluetooth/csr8x11-mac.psr ]; then
+		# Read ethaddr
+		ethaddr="$(fw_printenv -n ethaddr 2>/dev/null)"
+
+		[ -z "$ethaddr" ] && {
+			. /lib/functions/system.sh
+			ethaddr=$(macaddr_random)
+		}
+
+		# Remove colons
+		mac_hex=$(echo "$ethaddr" | tr -d ':')
+
+		# Convert hex to decimal using shell arithmetic
+		mac_int=$((0x$mac_hex))
+
+		# Add 0x10
+		mac_int=$((mac_int + 0x10))
+
+		# Convert back to MAC format WITHOUT colons
+		ble_mac_addr=$(printf '%012x' "$mac_int")
+
+		mac_1_2=${ble_mac_addr:0:2}
+		mac_3_4=${ble_mac_addr:2:2}
+		mac_5_6=${ble_mac_addr:4:2}
+		mac_7_8=${ble_mac_addr:6:2}
+		mac_9_10=${ble_mac_addr:8:2}
+		mac_11_12=${ble_mac_addr:10:2}
+
+		echo "&0001 = 00$mac_7_8 $mac_9_10$mac_11_12 00$mac_5_6 $mac_1_2$mac_3_4" > /etc/bluetooth/csr8x11-mac.psr
+	fi
+}
+
+boot() {
+	gen_set_mac_psr
+	bccmd -t bcsp -b 115200 -d /dev/ttyMSM1 psload -r /etc/bluetooth/csr8x11-a12-bt4.2-patch.psr
+	bccmd -t bcsp -b 115200 -d /dev/ttyMSM1 psload -r /etc/bluetooth/csr8x11-coex.psr
+	bccmd -t bcsp -b 115200 -d /dev/ttyMSM1 psload -r /etc/bluetooth/csr8x11-mac.psr
+	hciattach -s 115200 /dev/ttyMSM1 bcsp 115200
+	sleep 5
+	start
+}
+start() {
+	hciconfig hci0 up
+}
+stop() {
+	hciconfig hci0 down
+}
