@@ -1,0 +1,125 @@
+#!/bin/sh /etc/rc.common
+
+START=99
+
+add_leds() {
+    local section="$1"
+    local name sysfs trigger dev modes enable
+
+    config_get enable "$section" enable
+    config_get name "$section" name
+    config_get sysfs "$section" sysfs
+    config_get trigger "$section" trigger
+    config_get dev "$section" dev
+    config_get modes "$section" modes
+
+    # Skip if not enabled
+    if [ "$enable" != "1" ]; then
+        return 0
+    fi
+
+    # Skip if sysfs is empty
+    if [ -z "$sysfs" ]; then
+        return 0
+    fi
+
+    # Check if this sysfs is already in system.@led
+    local i=0
+    while uci -q get system.@led[$i].sysfs >/dev/null 2>&1; do
+        if [ "$(uci -q get system.@led[$i].sysfs)" = "$sysfs" ]; then
+            return 0
+        fi
+        i=$((i + 1))
+    done
+
+    echo "nbg7815_led: ADDING LED: name=$name, sysfs=$sysfs, trigger=$trigger, dev=$dev, modes=$modes"
+
+    # Add new LED entry to system config
+    uci add system led >/dev/null
+    uci set system.@led[-1].name="$name"
+    uci set system.@led[-1].sysfs="$sysfs"
+    uci set system.@led[-1].trigger="$trigger"
+    [ -n "$dev" ] && uci set system.@led[-1].dev="$dev"
+
+    # Convert comma-separated modes to UCI list
+    if [ -n "$modes" ]; then
+        for m in $(echo "$modes" | tr ',' ' '); do
+            uci add_list system.@led[-1].mode="$m"
+        done
+    fi
+
+    # Signal that a commit is needed
+    execute_commit=1
+}
+
+change_led_color() {
+    sysfs="$1"
+    color="$2"
+
+    if [ -z "$sysfs" ] || [ -z "$color" ]; then
+        echo "nbg7815_led: apply_hardware_color: SKIPPED $section (missing sysfs or color)"
+        return 0
+    fi
+
+    if [ -f "/sys/class/leds/$sysfs/multi_intensity" ]; then
+        echo "nbg7815_led: Setting LED $sysfs to color: $color"
+        echo "$color" > "/sys/class/leds/$sysfs/multi_intensity"
+    fi
+}
+
+turn_leds_on() {
+    local section="$1"
+    local sysfs color
+
+    config_get sysfs "$section" sysfs
+    config_get color "$section" color
+    change_led_color "$sysfs" "$color"
+
+}
+
+turn_leds_off() {
+    local section="$1"
+    local sysfs
+
+    config_get sysfs "$section" sysfs
+    change_led_color "$sysfs" "0 0 0"
+
+}
+
+boot() {
+    echo "nbg7815_led: boot() started"
+    local execute_commit=0
+
+    if [ ! -f "/etc/config/led_colors" ]; then
+        echo "nbg7815_led: ERROR - /etc/config/led_colors not found"
+        return 1
+    fi
+
+    config_load led_colors
+    config_foreach add_leds leds
+
+    if [ "$execute_commit" = "1" ]; then
+        echo "nbg7815_led: Changes were made, committing system config..."
+        uci commit system
+        echo "nbg7815_led: Restarting /etc/init.d/led service..."
+        /etc/init.d/led restart
+    fi
+
+    echo "nbg7815_led: boot() completed"
+    start
+}
+
+start() {
+    echo "nbg7815_led: start() called"
+    config_load led_colors
+    config_foreach turn_leds_on leds
+    echo "nbg7815_led: start() completed"
+}
+
+stop() {
+    echo "nbg7815_led: stop() called"
+    config_load led_colors
+	config_foreach turn_leds_off leds
+    echo "nbg7815_led: stop() completed"
+}
+
