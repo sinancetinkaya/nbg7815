@@ -1,8 +1,28 @@
 PART_NAME=firmware
 REQUIRE_IMAGE_METADATA=1
 
-RAMFS_COPY_BIN='fw_printenv fw_setenv head'
+RAMFS_COPY_BIN='fw_printenv fw_setenv head mkfs.ext4'
 RAMFS_COPY_DATA='/etc/fw_env.config /var/lock/fw_printenv.lock'
+
+# eMMC overlay is on a separate partition; sysupgrade -n does not clear it unless we do it here.
+zyxel_nbg7815_reset_overlay_if_fresh_sysupgrade() {
+	[ "$(board_name)" = "zyxel,nbg7815" ] || return 0
+	[ -z "$UPGRADE_BACKUP" ] || return 0
+
+	local ov="/dev/mmcblk0p10"
+	[ -b "$ov" ] || return 0
+
+	v "nbg7815: resetting eMMC overlay partition (sysupgrade without keeping settings)"
+
+	if command -v mkfs.ext4 >/dev/null 2>&1; then
+		mkfs.ext4 -F -L overlay "$ov" >/dev/null 2>&1 || {
+			echo "nbg7815: mkfs.ext4 failed for $ov" >&2
+			return 1
+		}
+	else
+		dd if=/dev/zero of="$ov" bs=1M count=64 conv=fsync 2>/dev/null || true
+	fi
+}
 
 xiaomi_initramfs_prepare() {
 	# Wipe UBI if running initramfs
@@ -312,6 +332,7 @@ platform_do_upgrade() {
 			CI_ROOTPART="rootfs_1"
 		fi
 		emmc_do_upgrade "$1"
+		zyxel_nbg7815_reset_overlay_if_fresh_sysupgrade
 		;;
 	*)
 		default_do_upgrade "$1"

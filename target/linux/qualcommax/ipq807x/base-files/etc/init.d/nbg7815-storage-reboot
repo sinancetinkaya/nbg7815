@@ -1,0 +1,19 @@
+#!/bin/sh /etc/rc.common
+
+START=99
+
+USE_PROCD=1
+
+REBOOT_MARKER="/tmp/nbg7815-reboot-required"
+
+start_service() {
+	[ -f "$REBOOT_MARKER" ] || return 0
+
+	logger -t nbg7815-storage "rebooting after initial setup completed"
+	rm -f "$REBOOT_MARKER"
+	sync
+	procd_open_instance
+	procd_set_param command /bin/sh -c 'reboot -f'
+	procd_set_param respawn 0 0 0
+	procd_close_instance
+}

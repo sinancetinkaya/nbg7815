@@ -1,0 +1,39 @@
+#!/bin/sh
+# Early: strip extroot markers on p10 and ensure basic overlay directory layout.
+
+. /lib/functions/system.sh
+
+nbg7815_fix_extroot_uuid() {
+	local board disk p10 mnt
+
+	board="$(board_name)"
+	[ "$board" = "zyxel,nbg7815" ] || return 0
+
+	disk="/dev/mmcblk0"
+	p10="${disk}p10"
+	mnt="/tmp/nbg7815-preinit-overlay"
+
+	[ -b "$p10" ] || return 0
+
+	mkdir -p "$mnt" || return 0
+	mount -t ext4 "$p10" "$mnt" 2>/dev/null || {
+		rmdir "$mnt" 2>/dev/null
+		return 0
+	}
+
+	rm -f "$mnt/etc/.extroot-uuid" "$mnt/etc/.extroot-default" \
+		"$mnt/upper/etc/.extroot-uuid" "$mnt/upper/etc/.extroot-default"
+
+	mkdir -p "$mnt/upper/etc" "$mnt/work"
+
+	if [ -e "$mnt/upper/etc/dropbear" ] && [ ! -d "$mnt/upper/etc/dropbear" ]; then
+		rm -f "$mnt/upper/etc/dropbear"
+	fi
+	mkdir -p "$mnt/upper/etc/dropbear"
+
+	sync
+	umount "$mnt" 2>/dev/null
+	rmdir "$mnt" 2>/dev/null
+}
+
+boot_hook_add preinit_main nbg7815_fix_extroot_uuid

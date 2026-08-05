@@ -544,7 +544,9 @@ define Device/zyxel_nbg7815
 	DEVICE_MODEL := NBG7815
 	DEVICE_DTS_CONFIG := config@nbg7815
 	SOC := ipq8074
-	DEVICE_PACKAGES := kmod-fs-f2fs f2fs-tools ipq-wifi-zyxel_nbg7815 kmod-ath11k-pci \
+	DEVICE_PACKAGES := kmod-fs-f2fs f2fs-tools kmod-fs-ext4 e2fsprogs \
+		fdisk blkid block-mount jsonfilter \
+		ipq-wifi-zyxel_nbg7815 kmod-ath11k-pci \
 		kmod-hci-uart kmod-hwmon-tmp103 kmod-leds-lp5569
 endef
 TARGET_DEVICES += zyxel_nbg7815

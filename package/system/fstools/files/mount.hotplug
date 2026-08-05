@@ -1,7 +1,9 @@
-[ "$ACTION" = "add" -o "$ACTION" = "remove" ]; then
-        case "$DEVNAME" in
-                mmcblk*) exit 0 ;;
-                *)
-                /sbin/block hotplug ;;
-        esac
+# Skip block hotplug for eMMC: /overlay is driven by UCI fstab (mmcblk0p10). Running
+# block hotplug on mmcblk* caused duplicate mount attempts on this device class.
 
+[ "$ACTION" = "add" -o "$ACTION" = "remove" ] || exit 0
+	case "$DEVNAME" in
+		mmcblk*) exit 0 ;;
+		*)
+		/sbin/block hotplug ;;
+	esac

@@ -1,0 +1,187 @@
+#!/bin/sh
+# NBG7815: merged overlay on mmcblk0p10 (legacy p10+p11), /backup on p1 (fstab).
+#
+# Migration to p10: initialize a clean OpenWrt overlay layout (upper/work) only.
+# User config is restored by sysupgrade backup flow when requested; do not copy
+# old upper data or patch auth DB from this script.
+# Do not create .extroot-default on p10. That flag tells fstools to use extroot (pivot root to the
+# partition), not the normal squashfs+overlay model. Our overlay is still there: fstab mounts p10 on
+# /overlay and upper/work hold the writable layer; removing the marker avoids "switched to extroot" and EPERM on /etc.
+
+. /lib/functions/system.sh
+
+BOARD="$(board_name)"
+DISK="/dev/mmcblk0"
+P10="${DISK}p10"
+P11="${DISK}p11"
+P1="${DISK}p1"
+EXPECTED_P10_START="307234"
+EXPECTED_P10_END="7405534"
+TMP_OVERLAY_MNT="/tmp/nbg7815-new-overlay"
+REBOOT_REQUIRED=0
+REBOOT_MARKER="/tmp/nbg7815-reboot-required"
+
+log() {
+	logger -t nbg7815-storage "$*"
+}
+
+partition_field() {
+	local dev="$1"
+	local field="$2"
+
+	fdisk -l "$DISK" 2>/dev/null | awk -v dev="$dev" -v field="$field" '
+		$1 == dev {
+			if (field == "start") print $2;
+			else if (field == "end") print $3;
+			else if (field == "blocks") print $4;
+			exit
+		}
+	'
+}
+
+fs_type() {
+	blkid -o value -s TYPE "$1" 2>/dev/null
+}
+
+is_mounted() {
+	local target="$1"
+
+	grep -qs " $target " /proc/mounts
+}
+
+cleanup_temp_mount() {
+	if is_mounted "$TMP_OVERLAY_MNT"; then
+		umount -l "$TMP_OVERLAY_MNT" 2>/dev/null
+	fi
+	rmdir "$TMP_OVERLAY_MNT" 2>/dev/null
+}
+
+trap cleanup_temp_mount EXIT INT TERM
+
+mount_source() {
+	local target="$1"
+
+	awk -v target="$target" '$2 == target { print $1; exit }' /proc/mounts
+}
+
+recreate_p10() {
+	log "recreating p10 as merged overlay partition"
+
+	fdisk "$DISK" <<'EOF'
+d
+11
+d
+10
+n
+10
+307234
+7405534
+w
+EOF
+}
+
+init_required_overlay_layout() {
+	mkdir -p "$TMP_OVERLAY_MNT/upper" \
+		"$TMP_OVERLAY_MNT/work" || return 1
+
+	return 0
+}
+
+populate_overlay_for_p10_migration() {
+	local dst
+
+	dst="$TMP_OVERLAY_MNT"
+	log "initializing clean p10 overlay layout"
+	init_required_overlay_layout || return 1
+
+	return 0
+}
+
+cleanup_extroot_markers() {
+	local root_etc upper_etc
+
+	root_etc="$TMP_OVERLAY_MNT/etc"
+	upper_etc="$TMP_OVERLAY_MNT/upper/etc"
+
+	# Strip extroot markers only; overlay stays (fstab /overlay + upper/work). See header comment.
+	rm -f "$root_etc/.extroot-uuid" "$root_etc/.extroot-default" 2>/dev/null
+	rm -f "$upper_etc/.extroot-uuid" "$upper_etc/.extroot-default" 2>/dev/null
+
+	return 0
+}
+
+prepare_extroot() {
+	local current_overlay
+	local upper_has_data
+
+	[ -b "$P10" ] || return 1
+
+	cleanup_temp_mount
+	mkdir -p "$TMP_OVERLAY_MNT" || return 1
+	if ! is_mounted "$TMP_OVERLAY_MNT"; then
+		mount -t ext4 "$P10" "$TMP_OVERLAY_MNT" || return 1
+	fi
+
+	init_required_overlay_layout || return 1
+	cleanup_extroot_markers || return 1
+
+	current_overlay="$(mount_source /overlay)"
+	if [ "$current_overlay" = "$P10" ]; then
+		cleanup_temp_mount
+		return 0
+	fi
+
+	log "overlay is still on '$current_overlay', preparing reboot into p10"
+	REBOOT_REQUIRED=1
+
+	upper_has_data="$(find "$TMP_OVERLAY_MNT/upper" -mindepth 1 -print -quit 2>/dev/null)"
+	if [ -z "$upper_has_data" ]; then
+		log "overlay is not on $P10 yet: populate p10/upper for migration"
+		populate_overlay_for_p10_migration || return 1
+		cleanup_extroot_markers || return 1
+	fi
+
+	sync
+	cleanup_temp_mount
+	return 0
+}
+
+case "$BOARD" in
+	zyxel,nbg7815) ;;
+	*)
+		exit 0
+		;;
+esac
+
+[ -b "$DISK" ] || exit 0
+
+P10_START="$(partition_field "$P10" start)"
+P10_END="$(partition_field "$P10" end)"
+
+if [ "$P10_START" != "$EXPECTED_P10_START" ] || [ "$P10_END" != "$EXPECTED_P10_END" ] || [ -b "$P11" ]; then
+	recreate_p10 || exit 1
+	sleep 2
+	REBOOT_REQUIRED=1
+fi
+
+if [ -b "$P10" ] && [ "$(fs_type "$P10")" != "ext4" ]; then
+	log "formatting $P10 as ext4"
+	mkfs.ext4 -F "$P10" >/dev/null 2>&1 || exit 1
+	REBOOT_REQUIRED=1
+fi
+
+if [ -b "$P1" ] && [ "$(fs_type "$P1")" != "ext4" ]; then
+	log "formatting $P1 as ext4 for /backup"
+	mkfs.ext4 -F "$P1" >/dev/null 2>&1 || exit 1
+fi
+
+prepare_extroot || exit 1
+
+if [ "$REBOOT_REQUIRED" -eq 1 ]; then
+	log "storage layout updated, scheduling reboot after boot/defaults finish"
+	cleanup_temp_mount
+	sync
+	touch "$REBOOT_MARKER"
+fi
+
+exit 0
