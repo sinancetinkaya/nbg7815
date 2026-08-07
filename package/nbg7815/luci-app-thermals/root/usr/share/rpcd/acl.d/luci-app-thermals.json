@@ -1,0 +1,13 @@
+{
+	"luci-app-thermals": {
+		"description": "Allow reading thermal zone sysfs files",
+		"read": {
+			"file": {
+				"/sys/class/thermal/thermal_zone*/type": [ "read" ],
+				"/sys/class/thermal/thermal_zone*/temp": [ "read" ],
+				"/sys/devices/virtual/thermal/thermal_zone*/type": [ "read" ],
+				"/sys/devices/virtual/thermal/thermal_zone*/temp": [ "read" ]
+			}
+		}
+	}
+}
