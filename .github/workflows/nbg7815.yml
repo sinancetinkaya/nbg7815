@@ -1,0 +1,101 @@
+name: Build OpenWrt Firmware for Zyxel NBG7815
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang flex bison gawk gettext \
+            git libncurses5-dev libssl-dev python3-setuptools rsync unzip zlib1g-dev \
+            file wget swig java-propose-classpath zip
+          sudo timedatectl set-timezone UTC
+
+      - name: Update and install feeds
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Not merged yet PRs for testing
+        run: |
+          # ksmbd-tools: update to version 3.5.7 - #30312
+          curl -sL https://github.com/openwrt/packages/commit/762eb13068fa98b736b06ece73a940e7f738e9af.patch -o /tmp/30312.patch
+          git -C feeds/packages apply --3way /tmp/30312.patch
+
+      - name: Load build configuration
+        run: |
+          cp configs/nbg7815.config .config
+          sed -i 's/^# CONFIG_ALL_KMODS=y$/CONFIG_ALL_KMODS=y/' .config # Compile all kernel modules
+          make defconfig
+
+      - name: Generate release tag
+        run: |
+          echo "RELEASE_TAG=$(date +'%Y.%m.%d-%H%M')" >> $GITHUB_ENV
+
+      - name: Configure custom distfeed via uci-defaults
+        run: |
+          mkdir -p files/etc/uci-defaults
+          cat << 'EOF' > "files/etc/uci-defaults/99-custom-distfeed-${{ env.RELEASE_TAG }}"
+          #!/bin/sh
+          # Replace any previous release's custom feed with the current one
+          FEED_URL="https://sinancetinkaya.github.io/openwrt-nss-edma/${{ env.RELEASE_TAG }}/packages.adb"
+          sed -i '\|^https://sinancetinkaya.github.io/openwrt-nss-edma/|d' /etc/apk/repositories.d/distfeeds.list
+          [ -s /etc/apk/repositories.d/distfeeds.list ] && [ -n "$(tail -c1 /etc/apk/repositories.d/distfeeds.list)" ] && echo >> /etc/apk/repositories.d/distfeeds.list
+          echo "$FEED_URL" >> /etc/apk/repositories.d/distfeeds.list
+
+          exit 0
+          EOF
+          chmod +x "files/etc/uci-defaults/99-custom-distfeed-${{ env.RELEASE_TAG }}"
+
+      - name: Cache downloaded sources
+        uses: actions/cache@v4
+        with:
+          path: dl
+          key: dl-${{ hashFiles('feeds.conf.default', 'configs/nbg7815.config') }}
+
+      - name: Download package sources
+        run: |
+          make download -j$(nproc)
+
+      - name: Compile OpenWrt
+        run: |
+          make -j$(nproc) -k IGNORE_ERRORS="n m" world 2>&1 | tee build.log
+
+      - name: Prepare GitHub Pages site directory
+        run: |
+          mkdir -p site_deploy
+          cp -r bin/targets/qualcommax/ipq807x/packages/* site_deploy/
+
+      - name: Deploy Everything to Versioned GitHub Pages Subdirectory
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: site_deploy
+          destination_dir: ${{ env.RELEASE_TAG }}
+          keep_files: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_TAG }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            bin/targets/qualcommax/ipq807x/openwrt-qualcommax-ipq807x-zyxel_nbg7815-initramfs-uImage.itb
+            bin/targets/qualcommax/ipq807x/openwrt-qualcommax-ipq807x-zyxel_nbg7815-squashfs-factory.bin
+            bin/targets/qualcommax/ipq807x/openwrt-qualcommax-ipq807x-zyxel_nbg7815-squashfs-sysupgrade.bin
+            build.log
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
