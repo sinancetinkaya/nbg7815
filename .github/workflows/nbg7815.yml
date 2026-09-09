@@ -48,8 +48,8 @@ jobs:
           cat << 'EOF' > "files/etc/uci-defaults/99-custom-distfeed-${{ env.RELEASE_TAG }}"
           #!/bin/sh
           # Replace any previous release's custom feed with the current one
-          FEED_URL="https://sinancetinkaya.github.io/openwrt-nss-edma/${{ env.RELEASE_TAG }}/packages.adb"
-          sed -i '\|^https://sinancetinkaya.github.io/openwrt-nss-edma/|d' /etc/apk/repositories.d/distfeeds.list
+          FEED_URL="https://sinancetinkaya.github.io/${{ github.event.repository.name }}/${{ env.RELEASE_TAG }}/packages.adb"
+          sed -i '\|^https://sinancetinkaya.github.io/${{ github.event.repository.name }}/|d' /etc/apk/repositories.d/distfeeds.list
           [ -s /etc/apk/repositories.d/distfeeds.list ] && [ -n "$(tail -c1 /etc/apk/repositories.d/distfeeds.list)" ] && echo >> /etc/apk/repositories.d/distfeeds.list
           echo "$FEED_URL" >> /etc/apk/repositories.d/distfeeds.list
 
